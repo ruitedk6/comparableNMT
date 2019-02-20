@@ -492,7 +492,7 @@ def train_opts(parser):
                        help="""Similarity measure to be used for extrtacting
                        parallel sentences. Options: [cosine]
                        """)
-    group.add_argument('--threshold', '-threshold', type=float, default=0.43,
+    group.add_argument('--threshold', '-threshold', type=float, default=float('-inf'),
                        help="Decision threshold for keeping a similar pair.")
     group.add_argument('--infer_threshold', '-infer_threshold', default=None,
                        help="""Infers threshold from training data.
@@ -507,7 +507,7 @@ def train_opts(parser):
                       help="""Set the percentile for percentile-based threshold inferrence.""")
     group.add_argument('--threshold_dynamics', '-threshold_dynamics', default='static',
                        help="""Set threshold dynamics. Options: [static|grow|decay]""")
-    group.add_argument('--comp_example_limit', '-comp_example_limit', type=int, default=10000000,
+    group.add_argument('--comp_example_limit', '-comp_example_limit', type=int, default=float('inf'),
                        help="""Limit number of training samples from comparable
                        data.""")
     group.add_argument('--no_base', '-no_base', action="store_true",
@@ -520,6 +520,8 @@ def train_opts(parser):
                        """)
     group.add_argument('--comp_epochs', '-comp_epochs', type=int, default=1,
                       help="""Number of epochs for comparable training.""")
+    group.add_argument('--comparable_data', '-comparable_data', default=None,
+                      help="""Path to comparable data list.""")
 
 def translate_opts(parser):
     """ Translation / inference options """

@@ -12,6 +12,8 @@ import onmt.utils
 # import onmt.io
 # import onmt.modules
 from onmt.trainer import Trainer
+from onmt.inputters.inputter import build_dataset_iter, lazily_load_dataset
+import onmt.inputters as inputters
 
 import math
 from collections import defaultdict
@@ -67,6 +69,7 @@ class PairBank():
         self.index_memory = set()
         self.batch_size = batch_size
         self.limit = opt.comp_example_limit
+        self.use_gpu = (len(opt.gpu_ranks) > 0)
 
     def removePadding(side):
         """ Removes original padding from a sequence.
@@ -86,20 +89,23 @@ class PairBank():
         return side
 
 
-    def add_example(self, batch, ex):
+    def add_example(self, src, tgt, fields):
         """ Add an example from a batch to the PairBank (self.pairs).
         Args:
             batch(torchtext.data.batch.Batch): batch containing the pair
             ex(int): index of the example
         """
         # Get example from src/tgt and remove original padding
-        src = PairBank.removePadding(batch.src[0][:, ex])
-        tgt = PairBank.removePadding(batch.tgt[:, ex])
-        src_length = batch.src[1][ex]
-        index = batch.indices[ex]
+        src = PairBank.removePadding(src)
+        tgt = PairBank.removePadding(tgt)
+        if self.use_gpu:
+            src_length = torch.tensor([src.size(0)]).cuda()
+        else:
+            src_length = torch.tensor([src.size(0)])
+        index = None
         # Create CompExample object holding all information needed for later
         # batch creation.
-        example = CompExample(batch.dataset, batch.fields, src, tgt,
+        example = CompExample(None, fields, src, tgt,
                               src_length, index)
         self.pairs.append(example)
         self.index_memory.add(hash((str(src), str(tgt))))
@@ -110,15 +116,15 @@ class PairBank():
         """
         return (len(self.pairs) >= self.batch_size)
 
-    def no_limit_reached(self, batch, ex):
-        src = PairBank.removePadding(batch.src[0][:, ex])
-        tgt = PairBank.removePadding(batch.tgt[:, ex])
+    def no_limit_reached(self, src, tgt):
+        src = PairBank.removePadding(src)
+        tgt = PairBank.removePadding(tgt)
         return (hash((str(src), str(tgt))) in self.index_memory or len(self.index_memory) < self.limit)
-# 
+
     def get_max_length_sequence(examples):
         return max([ex.size(0) for ex in examples])
 
-    def shape_example(example, max_len):
+    def shape_example(self, example, max_len):
         """ Formats an example to fit with its batch.
         Args:
             example(torch.Tensor): a src/tgt sequence (size(seq))
@@ -132,11 +138,14 @@ class PairBank():
             #    print("here")
             #    pad = torch.ones(pad_size, 1, dtype=torch.long).cuda()
             #else
-            pad = torch.ones(pad_size, 1, dtype=torch.long)
+            if self.use_gpu:
+                pad = torch.ones(pad_size, 1, dtype=torch.long).cuda()
+            else:
+                pad = torch.ones(pad_size, 1, dtype=torch.long)
             example = torch.cat((example, pad), 0)
         return example
 
-    def preprocess_side(examples):
+    def preprocess_side(self, examples):
         """ Formats a list of examples into one tensor.
         Args:
             examples(list): list of src/tgt sequence tensors
@@ -144,7 +153,7 @@ class PairBank():
             batch(torch.Tensor): src/tgt side of the batch (size(seq, batch))
         """
         max_len = PairBank.get_max_length_sequence(examples)
-        examples = [PairBank.shape_example(ex, max_len) for ex in examples]
+        examples = [self.shape_example(ex, max_len) for ex in examples]
         # Concatenate examples along the batch axis
         batch = torch.cat(examples, 1)
         return batch
@@ -160,7 +169,24 @@ class PairBank():
         examples = zip(src_examples, tgt_examples, src_lengths, indices)
         examples = sorted(examples, key=lambda x: x[2].item(), reverse=True)
         return zip(*examples)
-# 
+    
+    def check_sos_eos(self, tgt_example):
+        # If there is no sos symbol
+        if tgt_example[tgt_example==2].shape[0] == 0:
+            if self.use_gpu:
+                sos = torch.tensor([2]).cuda()
+            else:
+                sos = torch.tensor([2])
+            tgt_example = torch.cat((sos, tgt_example), 0)
+        if tgt_example[tgt_example==3].shape[0] == 0:
+            if self.use_gpu:
+                eos = torch.tensor([3]).cuda()
+            else:
+                
+                eos = torch.tensor([3])
+            tgt_example = torch.cat((tgt_example, eos), 0)
+        return tgt_example
+
     def create_batch(self, src_examples, tgt_examples, src_lengths, indices, dataset, fields):
         """ Creates a batch object from previously extracted parallel data.
         Args:
@@ -177,10 +203,11 @@ class PairBank():
         batch = Batch()
         src_examples, tgt_examples, src_lengths, indices = \
             PairBank.sort(src_examples, tgt_examples, src_lengths, indices)
-        src = PairBank.preprocess_side(src_examples)
-        tgt = PairBank.preprocess_side(tgt_examples)
-        src_lengths = torch.cat([length.unsqueeze(0) for length in src_lengths])
-        indices = torch.cat([index.unsqueeze(0) for index in indices])
+        src = self.preprocess_side(src_examples)
+        tgt_examples = [self.check_sos_eos(ex) for ex in tgt_examples]
+        tgt = self.preprocess_side(tgt_examples)
+        src_lengths = torch.cat([length for length in src_lengths])
+        indices = None
 
         batch.batch_size = src.size(1)
         batch.dataset = dataset
@@ -200,7 +227,6 @@ class PairBank():
         if len(self.pairs) < self.batch_size:
             return len(self.pairs)
         return self.batch_size
-# 
     def yield_batch(self):
         """ Prepare and yield a new batch from self.pairs.
 
@@ -332,20 +358,6 @@ class CompTrainer(Trainer):
         self.logger.info('Validation perplexity: %g' % valid_stats.ppl())
         self.logger.info('Validation accuracy: %g' % valid_stats.accuracy())
         return valid_stats
-# 
-#     def epoch_step(self, ppl):
-#         """ Decays learning rate if needed.
-#         Args:
-#             ppl(float): perplexity on validation data
-# 
-#         Returns:
-#             decay(boolean): whether a decay has taken place or not
-#         """
-#         decay = super(CompTrainer, self).epoch_step(ppl, self.cur_epoch)
-#         if decay:
-#             self.logger.info("Decaying learning rate to %g" % self.optim.lr)
-#         return decay
-# 
 class Comparable():
     """
     Class that controls the extraction of parallel sentences and manages their
@@ -365,11 +377,12 @@ class Comparable():
     """
 
     def __init__(self, model, trainer, fields, logger, opt):
-        self.encoder = model.encoder
+        #self.encoder = model.encoder
         self.sim_measure = opt.sim_measure
         self.threshold = opt.threshold
         self.similar_pairs = PairBank(opt.batch_size, opt)
         self.trainer = CompTrainer(trainer, logger, opt)
+        self.encoder = self.trainer.model.encoder
         self.fields = fields
         self.logger = logger
         self.accepted = 0
@@ -380,6 +393,27 @@ class Comparable():
         self.cove_type = opt.cove_type
         self.em_prob_threshold = opt.em_prob_threshold
         self.percentile = opt.percentile
+        self.k = 4
+        self.opt = opt
+        self.gpu = torch.device(opt.gpu_ranks[0]) if len(opt.gpu_ranks) > 0 else None
+        self.trainstep = 0
+
+
+    def _get_iterator(self, src_path):
+        data = inputters.build_dataset(fields=self.fields,
+                                     data_type='text',
+                                     src_path=src_path,
+                                     tgt_path=None,
+                                     src_dir='',
+                                     use_filter_pred=False)
+        data_iter = inputters.OrderedIterator(dataset=data,
+                                            device=self.gpu,
+                                            batch_size=self.similar_pairs.batch_size,
+                                            train=False,
+                                            sort=False,
+                                            sort_within_batch=True,
+                                            shuffle=False)
+        return data_iter
 
     def replaceEOS(fets):
         """Gets rid of EOS and SOS.
@@ -409,7 +443,7 @@ class Comparable():
             _, lengths = batch.src
         return fets, lengths
 
-    def forward(self, side):
+    def forward(self, side, representation='memory'):
         """ F-prop a src or tgt batch through the encoder.
         Args:
             side(torch.Tensor): batch to be f-propagated
@@ -420,8 +454,11 @@ class Comparable():
                 (size(seq, batch, fets))
         """
         with torch.no_grad():
-            enc_states, memory_bank, src_lengths = self.encoder(side, None)
-            return memory_bank
+            embeddings, memory_bank, src_lengths = self.encoder(side, None)
+            if representation == 'embed':
+                return embeddings
+            else:
+                return memory_bank
 
     def calculate_similarity(self, src, tgt):
         """ Calculates the similarity between two sentence representations.
@@ -446,7 +483,7 @@ class Comparable():
                  if idx not in [0, 1, 2, 3]]
         return words
 
-    def write_sentence(self, src, tgt, ex, status, sim=None):
+    def write_sentence(self, src, tgt, status, score=None):
         """
         Writes an accepted/rejected parallel sentence candidate pair to a file.
 
@@ -457,15 +494,23 @@ class Comparable():
             status(str): ['accepted', 'accepted-limit', 'rejected']
             sim(float): similaritiy of the sentence pair
         """ 
-        src_words = self.idx2words(src[:, ex, 0], 'src')
-        tgt_words = self.idx2words(tgt[:, ex, 0], 'tgt')
+        src_words = self.idx2words(src, 'src')
+        tgt_words = self.idx2words(tgt, 'tgt')
         out = 'src: {}\ttgt: {}\tsimilarity: {}\tstatus: {}\n'.format(' '.join(src_words), 
-                                            ' '.join(tgt_words), sim, status)
+                                            ' '.join(tgt_words), score, status)
         if status == 'accepted' or status == 'accepted-limit':
             self.accepted_file.write(out)
-        else:
-            self.rejected_file.write(out)
+        #else:
+        #    self.rejected_file.write(out)
         return None
+
+    def get_cove(self, memory, ex):
+        seq_ex = memory[:, ex, :]
+        if self.cove_type == 'mean':
+            cove = torch.mean(seq_ex, dim=0)
+        else:
+            cove = torch.sum(seq_ex, dim=0)
+        return cove
 
     def get_similarities(self, src, tgt):
         """
@@ -484,22 +529,15 @@ class Comparable():
 
         for ex in range(src.size(1)):
             # Get current example
-            src_ex = src_memory[:, ex, :]
-            tgt_ex = tgt_memory[:, ex, :]
-            # Get sentence representation 
-            if self.cove_type == "mean":
-                src_cove = torch.mean(src_ex, dim=0)
-                tgt_cove = torch.mean(tgt_ex, dim=0)
-            else: 
-                src_cove = torch.sum(src_ex, dim=0)
-                tgt_cove = torch.sum(tgt_ex, dim=0)
+            src_cove = self.get_cove(src_memory, ex)
+            tgt_cove = self.get_cove(tgt_memory, ex)
             # Calculate similarity
             sim = self.calculate_similarity(src_cove, tgt_cove)
             similarities.append(sim)
 
         return similarities
-# 
-    def extract_parallel_sents(self, batch):
+
+    def extract_parallel_sents(self, candidates, candidate_pool):
         """ 
         Extracts parallel sentences from a batch and adds them to the
         PairBank.
@@ -507,36 +545,34 @@ class Comparable():
         Args:
             batch(torchtext.data.batch.Batch): batch object
         """
-        # Get src and tgt
-        src, src_lengths = Comparable.getFeatures(batch, 'src')
-        tgt, _ = Comparable.getFeatures(batch, 'tgt')
-
-        similarities = self.get_similarities(src, tgt)
-        #for ex in range(len(similarities)):
-        #    print(similarities[ex])
-        #    print(self.idx2words(src[:, ex, 0], 'src'))
-        #    print(self.idx2words(tgt[:, ex, 0], 'tgt'))
-
-        assert (len(similarities) == src.size(1)), \
-            "Number of similarities != number of examples in batch!"
-
-        for ex in range(src.size(1)):
-            if similarities[ex] >= self.threshold:
-                if self.similar_pairs.no_limit_reached(batch, ex):
-                    # Add to PairBank if similarity above threshold
-                    self.similar_pairs.add_example(batch, ex)
-                    self.accepted += 1
-                    self.write_sentence(src, tgt, ex, 'accepted', similarities[ex])
+        for candidate in candidates:
+            candidate_pair = hash((str(candidate[0]), str(candidate[1])))
+            if candidate_pair in candidate_pool:
+                swap = np.random.randint(2)
+                if swap:
+                    src = candidate[1]
+                    tgt = candidate[0]
                 else:
-                    self.accepted_limit += 1
-                    self.write_sentence(src, tgt, ex, 'accepted-limit', similarities[ex])
+                    src = candidate[0]
+                    tgt = candidate[1]
+                score = candidate[2]
+                if score >= self.threshold:
+                    if self.similar_pairs.no_limit_reached(src, tgt):
+                        # Add to PairBank if similarity above threshold
+                        self.similar_pairs.add_example(src, tgt, self.fields)
+                        self.accepted += 1
+                        self.write_sentence(src, tgt, 'accepted', score)
+                    else:
+                        self.accepted_limit += 1
+                        self.write_sentence(src, tgt, 'accepted-limit', score)
 
+                else:
+                    self.declined +=1
             else:
-                self.declined +=1
-                self.write_sentence(src, tgt, ex, 'rejected', similarities[ex])
+                self.declined += 1
             self.total += 1
 
-        return similarities
+        return None
  
     def write_similarities(self, values, name):
         val_count = defaultdict(int)
@@ -563,58 +599,13 @@ class Comparable():
             if true_prob >= self.em_prob_threshold:
                 return sim
 
-    def infer_threshold(self, data_iter, dataset, infer_type):
-        """
-        Gets the mean and standard deviation of the similarities of the
-        training data to infer an appropriate threshold.
-        Args:
-            data_iter(:obj:'train.DatasetLazyIter'): data iterator
-            dataset(str): dataset type ['base'|'comp']
-            infer_type(str): type of inference ['mean-s'|'mean'|'mean+s']
-        Return:
-            threshold(float): the threshold set for sentence extraction
-        """
-        items = 0
-        values = []
-        for batch in data_iter:
-            src, src_lengths = Comparable.getFeatures(batch, 'src')
-            tgt, _ = Comparable.getFeatures(batch, 'tgt')
-            similarities = self.get_similarities(src, tgt)
-            items += len(similarities)
-            values += similarities
-        
-        self.estim_values = values
-        
-        if infer_type in ['mean-s', 'mean', 'mean+s']:
-            self.write_similarities(values, 'estim_{}'.format(dataset))
-            mean = sum(values) / items
-            variance = sum([math.pow((value - mean), 2) for value in values]) / items
-            s_d = math.sqrt(variance)
-            
-            if infer_type == 'mean-s':
-                threshold = mean - s_d
-            elif infer_type == 'mean':
-                threshold = mean
-            else:
-                threshold = mean + s_d
-        
-        elif infer_type == 'percentile':
-            threshold = np.percentile(np.array(values), self.percentile, axis=0)
-        
-        elif infer_type == 'em':
-            threshold = self.em(values)
-
-        self.threshold = threshold
-        self.logger.info('Threshold for comparable training is set to: %.3f' %
-                         threshold)
-        return threshold
 
 
     def update_threshold(self, dynamics, threshold_type):
         if dynamics == 'decay':
-            update = -0.01
+            update = -0.001
         else:
-            update = 0.01
+            update = 0.001
 
         if threshold_type == 'em':
             if self.em_prob_threshold < 0.95:
@@ -627,14 +618,101 @@ class Comparable():
             if self.percentile < 99:
                 self.percentile += (update * 100)
                 self.threshold = np.percentile(np.array(self.estim_values), self.percentile)
+        else:
+            self.threshol += update
 
         self.logger.info('Threshold for comaprable training is set to: %.3f' %
                                  self.threshold)
 
 
+    def _sum_k_nearest(self, mapping, cove):
+        k_nearest = sorted(mapping[cove].items(), key=lambda x: x[1], reverse=True)[:self.k]
+        sum_k_nearest = sum([ex[1] for ex in k_nearest])
+        return sum_k_nearest / (2 * len(k_nearest))
+
+    def score_sents(self, src_sents, tgt_sents):
+        src2tgt = defaultdict(dict)
+        tgt2src = defaultdict(dict)
+        similarities = []
+        scores= []
+        for src, src_cove in src_sents:
+            for tgt, tgt_cove in tgt_sents:
+                if src[0] == tgt[0]:
+                    continue
+                sim = self.calculate_similarity(src_cove, tgt_cove)
+                src2tgt[src][tgt] = sim
+                tgt2src[tgt][src] = sim
+                similarities.append(sim)
+        for src, _ in src_sents:
+            src2tgt[src]['sum'] = self._sum_k_nearest(src2tgt, src)
+
+        for tgt, _ in tgt_sents:
+            tgt2src[tgt]['sum'] = self._sum_k_nearest(tgt2src, tgt)
+
+        for src, _ in src_sents:
+            for tgt, _ in tgt_sents:
+                if src[0] == tgt[0]:
+                    continue
+                src2tgt[src][tgt] /= (src2tgt[src]['sum'] + tgt2src[tgt]['sum'])
+
+        for tgt, tgt_cove in tgt_sents:
+            for src, src_cove in src_sents:
+                if src[0] == tgt[0]:
+                    continue
+                #print(src2tgt[src][tgt])
+                tgt2src[tgt][src] /= (src2tgt[src]['sum'] + tgt2src[tgt]['sum'])
+                #print('##############')
+                #print(src2tgt[src][tgt])
+                #print(len(list(src2tgt[src].items())))
+                #print(len(list(tgt2src[tgt].items())))
+                #print(self.idx2words(src, 'src'))
+                #print(self.idx2words(tgt, 'tgt'))
+            del tgt2src[tgt]['sum']
+
+        for src in list(src2tgt.keys()):
+            del src2tgt[src]['sum']
+            scores += list(src2tgt[src].values())
+        return src2tgt, tgt2src, similarities, scores
 
 
-    def extract_and_train(self, comp_iter):
+    def get_article_coves(self, article, representation='memory'):
+        sents = []
+        for batch in article:
+                fets, _ = Comparable.getFeatures(batch, 'src')
+                if representation == 'memory':
+                    sent_repr = self.forward(fets)
+                elif representation == 'embed':
+                    fets[fets<500] = 1
+                    sent_repr = self.forward(fets, representation='embed')
+                for ex in range(fets.size(1)):
+                    cove = self.get_cove(sent_repr, ex)
+                    sents.append((batch.src[0][:, ex], cove))
+                return sents
+
+    def filter_candidates(self, src2tgt, tgt2src):
+        src_tgt_max = set()
+        tgt_src_max = set()
+        for src in list(src2tgt.keys()):
+            max_tgt = sorted(src2tgt[src].items(), key=lambda x: x[1], reverse=True)[0]
+            src_tgt_max.add((src, max_tgt[0], max_tgt[1]))
+
+        for tgt in list(tgt2src.keys()):
+            max_src = sorted(tgt2src[tgt].items(), key=lambda x: x[1], reverse=True)[0]
+            tgt_src_max.add((max_src[0], tgt, max_src[1]))
+
+        candidates = list(src_tgt_max & tgt_src_max)
+        return candidates
+
+    def get_comparison_pool(self, src_article, tgt_article):
+        src_embeds = self.get_article_coves(src_article, 'embed')
+        tgt_embeds = self.get_article_coves(tgt_article, 'embed')
+        src2tgt_embed, tgt2src_embed, _, _ = self.score_sents(src_embeds, tgt_embeds)
+        candidates_embed = self.filter_candidates(src2tgt_embed, tgt2src_embed)
+        set_embed = set([hash((str(c[0]), str(c[1]))) for c in candidates_embed])
+        candidate_pool = set_embed
+        return candidate_pool
+
+    def extract_and_train(self, comparable_data_list):
         """ Manages the alternating extraction of parallel sentences and training.
         Returns:
             train_stats(:obj:'onmt.Trainer.Statistics'): epoch loss statistics
@@ -645,22 +723,73 @@ class Comparable():
                 open('{}_accepted-e{}.txt'.format(self.comp_log, self.trainer.cur_epoch), 'w+', encoding='utf8')
         self.rejected_file = \
                 open('{}_rejected-e{}.txt'.format(self.comp_log, self.trainer.cur_epoch) ,'w+', encoding='utf8')
+
+        self.status_file = '{}_status-e{}.txt'.format(self.comp_log, self.trainer.cur_epoch)
         epoch_similarities = []
+        epoch_scores = []
         # Go through comparable data
-        for batch in comp_iter:
-            # Extract parallel sentences from batch
-            similarities = self.extract_parallel_sents(batch)
-            epoch_similarities += similarities
-            # Check if enough parallel sentences were collected
-            while self.similar_pairs.contains_batch():
-                # Get a batch of extracted parrallel sentences and train
-                training_batch = self.similar_pairs.yield_batch()
-                train_stats = self.trainer.train(training_batch)
-         # Train on remaining partial batch
-        if len((self.similar_pairs.pairs)) > 0:
-            train_stats = self.trainer.train(self.similar_pairs.yield_batch())
+        counter = 0
+        trained_batchs = 0
+        with open(comparable_data_list, encoding='utf8') as c:
+            comp_list = c.read().split('\n')
+            num_articles = len(comp_list)
+            cur_article = 0
+            for article_pair in comp_list:
+                cur_article += 1
+                with open(self.status_file, 'a', encoding='utf8') as s:
+                    s.write('{} / {}\n'.format(cur_article, num_articles))
+                articles = article_pair.split('\t')
+                if len(articles) != 2:
+                    continue
+                src_article = self._get_iterator(articles[0])
+                tgt_article = self._get_iterator(articles[1])
+                # Get Coves (possibly moves this to seperate method)
+                #try and except
+                try:
+                    src_sents = self.get_article_coves(src_article)
+                    tgt_sents = self.get_article_coves(tgt_article)
+                except:
+                    continue
+                # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
+                if len(src_sents) < 15 or len(tgt_sents) < 15:
+                    continue
+                # Score src and tgt sentences
+                src2tgt, tgt2src, similarities, scores = self.score_sents(src_sents, tgt_sents)
+                epoch_similarities += similarities
+                epoch_scores += scores
+                # Filter candidates
+                candidates = self.filter_candidates(src2tgt, tgt2src)
+                try:
+                    comparison_pool = self.get_comparison_pool(src_article, tgt_article)
+                except:
+                    print('Error occured in: {}\n'.format(article_pair), flugh=True)
+                    continue
+                # Extract parallel samples
+                self.extract_parallel_sents(candidates, comparison_pool)
+                # Check if enough parallel sentences were collected
+                while self.similar_pairs.contains_batch():
+                    # Get a batch of extracted parrallel sentences and train
+                    training_batch = self.similar_pairs.yield_batch()
+                    train_stats = self.trainer.train(training_batch)
+                    self.trainstep += 1
+                    trained_batchs += 1
+                    if trained_batchs % 500 == 0:
+                        valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
+                                                        self.fields, self.opt)
+                        valid_stats = self.validate(valid_iter)
+                        self.trainer.model_saver._save(self.trainstep)
+                        if self.opt.threshold_dynamics == 'static':
+                            continue
+                        else:
+                            self.update_threshold(self.opt.threshold_dynamics,
+                                                  self.opt.infer_threshold)
+            # Train on remaining partial batch
+            if len((self.similar_pairs.pairs)) > 0:
+                train_stats = self.trainer.train(self.similar_pairs.yield_batch())
+                self.trainstep += 1
 
         self.write_similarities(epoch_similarities, 'e{}_comp'.format(self.trainer.cur_epoch))
+        self.write_similarities(epoch_scores, 'e{}_comp_scores'.format(self.trainer.cur_epoch))
         self.trainer.report_epoch()
         self.logger.info('Accepted parrallel sentences from comparable data: %d / %d' %
                     (self.accepted, self.total))

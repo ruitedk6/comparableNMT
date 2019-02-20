@@ -170,13 +170,6 @@ def main(opt, device_id):
         comp = Comparable(model, trainer, fields, logger, opt)
 
         # 2. Infer similarity threshold from training data
-        if opt.infer_data == 'base':
-            infer_iter = build_dataset_iter(lazily_load_dataset("train", opt), fields, opt)
-        elif opt.infer_data == 'comp':
-            infer_iter = build_dataset_iter(lazily_load_dataset("comp", opt), fields, opt)
-
-        if opt.infer_threshold:
-            comp.infer_threshold(infer_iter, opt.infer_data, opt.infer_threshold)
 
         for epoch in range(opt.comp_epochs):
             # 3. Update threshold if dynamic
@@ -184,8 +177,7 @@ def main(opt, device_id):
                 comp.update_threshold(opt.threshold_dynamics, opt.infer_threshold)
 
             # 4. Extract parallel data and train
-            comp_iter = build_dataset_iter(lazily_load_dataset("comp", opt), fields, opt)
-            train_stats = comp.extract_and_train(comp_iter)
+            train_stats = comp.extract_and_train(opt.comparable_data)
 
             # 5. Validate on validation set
             valid_iter = build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
