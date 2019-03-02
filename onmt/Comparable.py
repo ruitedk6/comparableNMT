@@ -18,7 +18,6 @@ import onmt.inputters as inputters
 import math
 from collections import defaultdict
 import numpy as np
-from sklearn.mixture import GaussianMixture as GMM 
 import time
 
 class CompExample():
@@ -395,8 +394,10 @@ class Comparable():
         self.percentile = opt.percentile
         self.k = 4
         self.opt = opt
-        self.gpu = torch.device(opt.gpu_ranks[0]) if len(opt.gpu_ranks) > 0 else None
+        self.gpu = torch.device('cuda') if len(opt.gpu_ranks) > 0 else None
         self.trainstep = 0
+        self.second = opt.second
+        self.representations = opt.representations
 
 
     def _get_iterator(self, src_path):
@@ -413,6 +414,7 @@ class Comparable():
                                             sort=False,
                                             sort_within_batch=True,
                                             shuffle=False)
+        #print(data_iter.__dict__)
         return data_iter
 
     def replaceEOS(fets):
@@ -547,29 +549,31 @@ class Comparable():
         """
         for candidate in candidates:
             candidate_pair = hash((str(candidate[0]), str(candidate[1])))
-            if candidate_pair in candidate_pool:
-                swap = np.random.randint(2)
-                if swap:
-                    src = candidate[1]
-                    tgt = candidate[0]
-                else:
-                    src = candidate[0]
-                    tgt = candidate[1]
-                score = candidate[2]
-                if score >= self.threshold:
-                    if self.similar_pairs.no_limit_reached(src, tgt):
-                        # Add to PairBank if similarity above threshold
-                        self.similar_pairs.add_example(src, tgt, self.fields)
-                        self.accepted += 1
-                        self.write_sentence(src, tgt, 'accepted', score)
-                    else:
-                        self.accepted_limit += 1
-                        self.write_sentence(src, tgt, 'accepted-limit', score)
-
-                else:
-                    self.declined +=1
+            if candidate_pool:
+                if candidate_pair not in candidate_pool:
+                    self.declined += 1
+                    self.total += 1
+                    continue
+            swap = np.random.randint(2)
+            if swap:
+                src = candidate[1]
+                tgt = candidate[0]
             else:
-                self.declined += 1
+                src = candidate[0]
+                tgt = candidate[1]
+            score = candidate[2]
+            if score >= self.threshold:
+                if self.similar_pairs.no_limit_reached(src, tgt):
+                    # Add to PairBank if similarity above threshold
+                    self.similar_pairs.add_example(src, tgt, self.fields)
+                    self.accepted += 1
+                    self.write_sentence(src, tgt, 'accepted', score)
+                else:
+                    self.accepted_limit += 1
+                    self.write_sentence(src, tgt, 'accepted-limit', score)
+
+            else:
+                self.declined +=1
             self.total += 1
 
         return None
@@ -689,16 +693,32 @@ class Comparable():
                     sents.append((batch.src[0][:, ex], cove))
                 return sents
 
-    def filter_candidates(self, src2tgt, tgt2src):
+    def filter_candidates(self, src2tgt, tgt2src, second=False):
         src_tgt_max = set()
         tgt_src_max = set()
+        src_tgt_second = set()
+        tgt_src_second = set()
         for src in list(src2tgt.keys()):
-            max_tgt = sorted(src2tgt[src].items(), key=lambda x: x[1], reverse=True)[0]
+            toplist = sorted(src2tgt[src].items(), key=lambda x: x[1], reverse=True)
+            max_tgt = toplist[0]
             src_tgt_max.add((src, max_tgt[0], max_tgt[1]))
+            if second:
+                second_tgt = toplist[1]
+                src_tgt_second.add((src, second_tgt[0], second_tgt[1]))
 
         for tgt in list(tgt2src.keys()):
-            max_src = sorted(tgt2src[tgt].items(), key=lambda x: x[1], reverse=True)[0]
+            toplist = sorted(tgt2src[tgt].items(), key=lambda x: x[1], reverse=True)
+            max_src = toplist[0]
             tgt_src_max.add((max_src[0], tgt, max_src[1]))
+            if second:
+                second_src = toplist[1]
+                tgt_src_second.add((second_src[0], tgt, second_src[1]))
+
+        if second:
+            src_tgt = (src_tgt_max | src_tgt_second) & tgt_src_max
+            #tgt_src = (tgt_src_max | tgt_src_second) & src_tgt_max
+            #candidates = list(src_tgt | tgt_src)
+            return list(src_tgt)
 
         candidates = list(src_tgt_max & tgt_src_max)
         return candidates
@@ -746,8 +766,13 @@ class Comparable():
                 # Get Coves (possibly moves this to seperate method)
                 #try and except
                 try:
-                    src_sents = self.get_article_coves(src_article)
-                    tgt_sents = self.get_article_coves(tgt_article)
+                    if self.representations == 'embed-only':
+                        src_sents = self.get_article_coves(src_article, 'embed')
+                        tgt_sents = self.get_article_coves(tgt_article, 'embed')
+                    else:
+                        src_sents = self.get_article_coves(src_article)
+                        tgt_sents = self.get_article_coves(tgt_article)
+
                 except:
                     continue
                 # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
@@ -758,11 +783,15 @@ class Comparable():
                 epoch_similarities += similarities
                 epoch_scores += scores
                 # Filter candidates
-                candidates = self.filter_candidates(src2tgt, tgt2src)
                 try:
-                    comparison_pool = self.get_comparison_pool(src_article, tgt_article)
+                    if self.representations == 'dual':
+                        candidates = self.filter_candidates(src2tgt, tgt2src, second=self.second)
+                        comparison_pool = self.get_comparison_pool(src_article, tgt_article)
+                    else:
+                        candidates = self.filter_candidates(src2tgt, tgt2src)
+                        comparison_pool = None
                 except:
-                    print('Error occured in: {}\n'.format(article_pair), flugh=True)
+                    print('Error occured in: {}\n'.format(article_pair), flush=True)
                     continue
                 # Extract parallel samples
                 self.extract_parallel_sents(candidates, comparison_pool)

@@ -522,6 +522,11 @@ def train_opts(parser):
                       help="""Number of epochs for comparable training.""")
     group.add_argument('--comparable_data', '-comparable_data', default=None,
                       help="""Path to comparable data list.""")
+    group.add_argument('--second', '-second', action="store_true",
+                      help="""Use second best filtering.""")
+    group.add_argument('--representations', '-representations', default='dual',
+                      help="""Sentece representations used.
+                       Options: [dual|embed-only|hidden-only]""")
 
 def translate_opts(parser):
     """ Translation / inference options """
