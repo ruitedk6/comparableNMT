@@ -198,8 +198,8 @@ class Trainer(object):
                         self._report_step(self.optim.learning_rate,
                                           step, valid_stats=valid_stats)
 
-                    if self.gpu_rank == 0:
-                        self._maybe_save(step)
+                    #if self.gpu_rank == 0:
+                    self._maybe_save(step)
                     step += 1
                     if step > train_steps:
                         break
