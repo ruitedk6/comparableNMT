@@ -527,6 +527,8 @@ def train_opts(parser):
     group.add_argument('--representations', '-representations', default='dual',
                       help="""Sentece representations used.
                        Options: [dual|embed-only|hidden-only]""")
+    group.add_argument('--internal_split', '-internal_split', type=int, default=None,
+                      help="""Specify size of corpus internal splits to perform.""")
 
 def translate_opts(parser):
     """ Translation / inference options """
