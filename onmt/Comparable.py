@@ -409,9 +409,13 @@ class Comparable():
                                      tgt_path=None,
                                      src_dir='',
                                      use_filter_pred=False)
+        if self.internal_split:
+            batch_size = self.internal_split
+        else:
+            batch_size = self.similar_pairs.batch_size
         data_iter = inputters.OrderedIterator(dataset=data,
                                             device=self.gpu,
-                                            batch_size=self.similar_pairs.batch_size,
+                                            batch_size=batch_size,
                                             train=False,
                                             sort=False,
                                             sort_within_batch=True,
@@ -686,6 +690,8 @@ class Comparable():
 
     def get_article_coves(self, article, representation='memory'):
         sents = []
+        if self.internal_split:
+            article = [article]
         for batch in article:
                 fets, _ = Comparable.getFeatures(batch, 'src')
                 if representation == 'memory':
@@ -728,47 +734,15 @@ class Comparable():
         candidates = list(src_tgt_max & tgt_src_max)
         return candidates
 
-    def get_comparison_pool(self, src_embeds, tgt_embeds):
-        #src_embeds = self.get_article_coves(src_article, 'embed')
-        #tgt_embeds = self.get_article_coves(tgt_article, 'embed')
+    def get_comparison_pool(self, src_article, tgt_article):
+        src_embeds = self.get_article_coves(src_article, 'embed')
+        tgt_embeds = self.get_article_coves(tgt_article, 'embed')
         src2tgt_embed, tgt2src_embed, _, _ = self.score_sents(src_embeds, tgt_embeds)
         candidates_embed = self.filter_candidates(src2tgt_embed, tgt2src_embed)
         set_embed = set([hash((str(c[0]), str(c[1]))) for c in candidates_embed])
         candidate_pool = set_embed
         return candidate_pool
 
-    def get_lots(self, sents):
-        interval = self.internal_split
-        lots = []
-        cur_lot = []
-        i = 0
-        for sent in sents:
-            cur_lot.append(sent)
-            i += 1
-            if i == interval:
-                lots.append(cur_lot)
-                cur_lot = []
-                i = 0
-        if len(cur_lot) > 0:
-            lots.append(cur_lot)
-        return lots
-
-
-    def split_article(self, src_sents, tgt_sents, src_sents_embed=None, tgt_sents_embed=None):
-        src_lots = self.get_lots(src_sents)
-        tgt_lots = self.get_lots(tgt_sents)
-        self.cur_num_combinations = len(src_lots) * len(tgt_lots)
-        if src_sents_embed:
-            src_lots_embed = self.get_lots(src_sents_embed)
-            tgt_lots_embed = self.get_lots(tgt_sents_embed)
-            if len(src_lots) != len(src_lots_embed):
-                print('Src lots != src lots in embed.', flush=True)
-        for src in range(len(src_lots)):
-            for tgt in range(len(tgt_lots)):
-                if src_sents_embed:
-                    yield src_lots[src], tgt_lots[tgt], src_lots_embed[src], tgt_lots_embed[tgt]
-                else:
-                    yield src_lots[src], tgt_lots[tgt], None, None
 
     def extract_and_train(self, comparable_data_list):
         """ Manages the alternating extraction of parallel sentences and training.
@@ -794,78 +768,80 @@ class Comparable():
             cur_article = 0
             for article_pair in comp_list:
                 cur_article += 1
-                with open(self.status_file, 'a', encoding='utf8') as s:
-                    s.write('{} / {}\n'.format(cur_article, num_articles))
+                with open(self.status_file, 'a', encoding='utf8') as sf:
+                    sf.write('{} / {}\n'.format(cur_article, num_articles))
                 articles = article_pair.split('\t')
                 if len(articles) != 2:
                     continue
                 src_article = self._get_iterator(articles[0])
                 tgt_article = self._get_iterator(articles[1])
-                # Get Coves (possibly moves this to seperate method)
-                #try and except
-                try:
-                    if self.representations == 'embed-only':
-                        src_sents = self.get_article_coves(src_article, 'embed')
-                        tgt_sents = self.get_article_coves(tgt_article, 'embed')
-                    else:
-                        src_sents = self.get_article_coves(src_article)
-                        tgt_sents = self.get_article_coves(tgt_article)
-                    if self.representations == 'dual':
-                        src_sents_embed = self.get_article_coves(src_article, 'embed')
-                        tgt_sents_embed = self.get_article_coves(tgt_article, 'embed')
-                    else:
-                        src_sents_embed = None
-                        tgt_sents_embed = None
-                except:
-                    continue
-                # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
-                if len(src_sents) < 15 or len(tgt_sents) < 15:
-                    continue
                 if self.internal_split:
-                    splits = self.split_article(src_sents, tgt_sents, src_sents_embed,
-                                                tgt_sents_embed)
+                    s_iter = src_article
+                    t_iter = tgt_article
                 else:
-                    splits = [(src_sents, tgt_sents, src_sents_embed, tgt_sents_embed)]
+                    s_iter = [src_article]
+                    t_iter = [tgt_article]
                 cur_comb = 0
-                for src_sents, tgt_sents, src_sents_embed, tgt_sents_embed in splits:
-                    cur_comb += 1
-                    with open(self.status_file, 'a', encoding='utf8') as s:
-                        s.write('{} / {}\n'.format(cur_comb, self.cur_num_combinations))
-                    # Score src and tgt sentences
-                    src2tgt, tgt2src, similarities, scores = self.score_sents(src_sents, tgt_sents)
-                    epoch_similarities += similarities
-                    epoch_scores += scores
-                    # Filter candidates
+                for s in s_iter:
+                    # Get Coves (possibly moves this to seperate method)
+                    #try and except
                     try:
-                        if self.representations == 'dual':
-                            candidates = self.filter_candidates(src2tgt, tgt2src, second=self.second)
-                            comparison_pool = self.get_comparison_pool(src_sents_embed,
-                                                                       tgt_sents_embed)
+                        if self.representations == 'embed-only':
+                            src_sents = self.get_article_coves(s, 'embed')
                         else:
-                            candidates = self.filter_candidates(src2tgt, tgt2src)
-                            comparison_pool = None
+                            src_sents = self.get_article_coves(s)
                     except:
-                        print('Error occured in: {}\n'.format(article_pair), flush=True)
                         continue
-                    # Extract parallel samples
-                    self.extract_parallel_sents(candidates, comparison_pool)
-                    # Check if enough parallel sentences were collected
-                    while self.similar_pairs.contains_batch():
-                        # Get a batch of extracted parrallel sentences and train
-                        training_batch = self.similar_pairs.yield_batch()
-                        train_stats = self.trainer.train(training_batch)
-                        self.trainstep += 1
-                        trained_batchs += 1
-                        if trained_batchs % 500 == 0:
-                            valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
-                                                        self.fields, self.opt)
-                            valid_stats = self.validate(valid_iter)
-                        if trained_batchs % 5000 == 0:
-                            self.trainer.model_saver._save(self.trainstep)
-                            if self.opt.threshold_dynamics == 'static':
-                                continue
+
+                    for t in t_iter:
+                        try:
+                            if self.representations == 'embed-only':
+                                tgt_sents = self.get_article_coves(t, 'embed')
                             else:
-                                self.update_threshold(self.opt.threshold_dynamics,
+                                tgt_sents = self.get_article_coves(t)
+                        except:
+                            continue
+                        # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
+                        #if len(src_sents) < 15 or len(tgt_sents) < 15:
+                        #    continue
+
+                        cur_comb += 1
+                        with open(self.status_file, 'a', encoding='utf8') as sf:
+                            sf.write('{} / {}\n'.format(cur_comb, self.cur_num_combinations))
+                        # Score src and tgt sentences
+                        src2tgt, tgt2src, similarities, scores = self.score_sents(src_sents, tgt_sents)
+                        epoch_similarities += similarities
+                        epoch_scores += scores
+                        # Filter candidates
+                        try:
+                            if self.representations == 'dual':
+                                candidates = self.filter_candidates(src2tgt, tgt2src, second=self.second)
+                                comparison_pool = self.get_comparison_pool(s, t)
+                            else:
+                                candidates = self.filter_candidates(src2tgt, tgt2src)
+                                comparison_pool = None
+                        except:
+                            print('Error occured in: {}\n'.format(article_pair), flush=True)
+                            continue
+                        # Extract parallel samples
+                        self.extract_parallel_sents(candidates, comparison_pool)
+                        # Check if enough parallel sentences were collected
+                        while self.similar_pairs.contains_batch():
+                            # Get a batch of extracted parrallel sentences and train
+                            training_batch = self.similar_pairs.yield_batch()
+                            train_stats = self.trainer.train(training_batch)
+                            self.trainstep += 1
+                            trained_batchs += 1
+                            if trained_batchs % 500 == 0:
+                                valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
+                                                        self.fields, self.opt)
+                                valid_stats = self.validate(valid_iter)
+                            if trained_batchs % 5000 == 0:
+                                self.trainer.model_saver._save(self.trainstep)
+                                if self.opt.threshold_dynamics == 'static':
+                                    continue
+                                else:
+                                    self.update_threshold(self.opt.threshold_dynamics,
                                                   self.opt.infer_threshold)
             # Train on remaining partial batch
             if len((self.similar_pairs.pairs)) > 0:
