@@ -696,7 +696,7 @@ class Comparable():
                 for ex in range(fets.size(1)):
                     cove = self.get_cove(sent_repr, ex)
                     sents.append((batch.src[0][:, ex], cove))
-                return sents
+        return sents
 
     def filter_candidates(self, src2tgt, tgt2src, second=False):
         src_tgt_max = set()
