@@ -398,7 +398,7 @@ class Comparable():
         self.trainstep = 0
         self.second = opt.second
         self.representations = opt.representations
-        self.internal_split = opt.internal_split
+        #self.internal_split = opt.internal_split
         self.cur_num_combinations = 1
 
 
@@ -409,13 +409,13 @@ class Comparable():
                                      tgt_path=None,
                                      src_dir='',
                                      use_filter_pred=False)
-        if self.internal_split:
-            batch_size = self.internal_split
-        else:
-            batch_size = self.similar_pairs.batch_size
+        #if self.internal_split:
+        #    batch_size = self.internal_split
+        #else:
+        #    batch_size = self.similar_pairs.batch_size
         data_iter = inputters.OrderedIterator(dataset=data,
                                             device=self.gpu,
-                                            batch_size=batch_size,
+                                            batch_size=self.similar_pairs.batch_size,
                                             train=False,
                                             sort=False,
                                             sort_within_batch=True,
@@ -690,8 +690,6 @@ class Comparable():
 
     def get_article_coves(self, article, representation='memory'):
         sents = []
-        if self.internal_split:
-            article = [article]
         for batch in article:
                 fets, _ = Comparable.getFeatures(batch, 'src')
                 if representation == 'memory':
@@ -775,73 +773,57 @@ class Comparable():
                     continue
                 src_article = self._get_iterator(articles[0])
                 tgt_article = self._get_iterator(articles[1])
-                if self.internal_split:
-                    s_iter = src_article
-                    t_iter = tgt_article
-                else:
-                    s_iter = [src_article]
-                    t_iter = [tgt_article]
-                cur_comb = 0
-                for s in s_iter:
-                    # Get Coves (possibly moves this to seperate method)
-                    #try and except
-                    try:
-                        if self.representations == 'embed-only':
-                            src_sents = self.get_article_coves(s, 'embed')
-                        else:
-                            src_sents = self.get_article_coves(s)
-                    except:
-                        continue
+                # Get Coves (possibly moves this to seperate method)
+                #try and except
+                try:
+                    if self.representations == 'embed-only':
+                        src_sents = self.get_article_coves(src_article, 'embed')
+                        tgt_sents = self.get_article_coves(tgt_article, 'embed')
+                    else:
+                        src_sents = self.get_article_coves(src_article)
+                        tgt_sents = self.get_article_coves(tgt_article)
+                except:
+                    continue
 
-                    for t in t_iter:
-                        try:
-                            if self.representations == 'embed-only':
-                                tgt_sents = self.get_article_coves(t, 'embed')
-                            else:
-                                tgt_sents = self.get_article_coves(t)
-                        except:
-                            continue
-                        # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
-                        #if len(src_sents) < 15 or len(tgt_sents) < 15:
-                        #    continue
+                # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
+                if len(src_sents) < 15 or len(tgt_sents) < 15:
+                    continue
 
-                        cur_comb += 1
-                        with open(self.status_file, 'a', encoding='utf8') as sf:
-                            sf.write('{} / {}\n'.format(cur_comb, self.cur_num_combinations))
-                        # Score src and tgt sentences
-                        src2tgt, tgt2src, similarities, scores = self.score_sents(src_sents, tgt_sents)
-                        epoch_similarities += similarities
-                        epoch_scores += scores
-                        # Filter candidates
-                        try:
-                            if self.representations == 'dual':
-                                candidates = self.filter_candidates(src2tgt, tgt2src, second=self.second)
-                                comparison_pool = self.get_comparison_pool(s, t)
-                            else:
-                                candidates = self.filter_candidates(src2tgt, tgt2src)
-                                comparison_pool = None
-                        except:
-                            print('Error occured in: {}\n'.format(article_pair), flush=True)
-                            continue
-                        # Extract parallel samples
-                        self.extract_parallel_sents(candidates, comparison_pool)
-                        # Check if enough parallel sentences were collected
-                        while self.similar_pairs.contains_batch():
-                            # Get a batch of extracted parrallel sentences and train
-                            training_batch = self.similar_pairs.yield_batch()
-                            train_stats = self.trainer.train(training_batch)
-                            self.trainstep += 1
-                            trained_batchs += 1
-                            if trained_batchs % 500 == 0:
-                                valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
+                # Score src and tgt sentences
+                src2tgt, tgt2src, similarities, scores = self.score_sents(src_sents, tgt_sents)
+                epoch_similarities += similarities
+                epoch_scores += scores
+                # Filter candidates
+                try:
+                    if self.representations == 'dual':
+                        candidates = self.filter_candidates(src2tgt, tgt2src, second=self.second)
+                        comparison_pool = self.get_comparison_pool(src_article,
+                                                                   tgt_article)
+                    else:
+                        candidates = self.filter_candidates(src2tgt, tgt2src)
+                        comparison_pool = None
+                except:
+                    print('Error occured in: {}\n'.format(article_pair), flush=True)
+                    continue
+                # Extract parallel samples
+                self.extract_parallel_sents(candidates, comparison_pool)
+                # Check if enough parallel sentences were collected
+                while self.similar_pairs.contains_batch():
+                    # Get a batch of extracted parrallel sentences and train
+                    training_batch = self.similar_pairs.yield_batch()
+                    train_stats = self.trainer.train(training_batch)
+                    self.trainstep += 1
+                    trained_batchs += 1
+                    if trained_batchs % 500 == 0:
+                        valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
                                                         self.fields, self.opt)
-                                valid_stats = self.validate(valid_iter)
-                            if trained_batchs % 5000 == 0:
-                                self.trainer.model_saver._save(self.trainstep)
-                                if self.opt.threshold_dynamics == 'static':
-                                    continue
-                                else:
-                                    self.update_threshold(self.opt.threshold_dynamics,
+                        valid_stats = self.validate(valid_iter)
+                    if trained_batchs % 5000 == 0:
+                        self.trainer.model_saver._save(self.trainstep)
+                        if self.opt.threshold_dynamics == 'static':
+                            continue
+                        else:
+                            self.update_threshold(self.opt.threshold_dynamics,
                                                   self.opt.infer_threshold)
             # Train on remaining partial batch
             if len((self.similar_pairs.pairs)) > 0:
