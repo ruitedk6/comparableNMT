@@ -488,9 +488,9 @@ def train_opts(parser):
     group = parser.add_argument_group('Comparable Data')
     group.add_argument('--comparable', '-comparable', action="store_true",
                        help="Use comparable data during training.")
-    group.add_argument('--sim_measure', '-sim_measure', default="cosine",
+    group.add_argument('--sim_measure', '-sim_measure', default="margin",
                        help="""Similarity measure to be used for extrtacting
-                       parallel sentences. Options: [cosine]
+                       parallel sentences. Options: [cosine|margin]
                        """)
     group.add_argument('--threshold', '-threshold', type=float, default=float('-inf'),
                        help="Decision threshold for keeping a similar pair.")

@@ -474,11 +474,7 @@ class Comparable():
             src(torch.Tensor): src sentence representation (size(fets))
             tgt(torch.Tensor): tgt sentence representation (size(fets))
         """
-        if self.sim_measure == "cosine":
-            # tolist() here only retrieves the scalar (no list)
-            return nn.functional.cosine_similarity(src, tgt, dim=0).tolist()
-        else:
-            return None
+        return nn.functional.cosine_similarity(src, tgt, dim=0).tolist()
 
     def idx2words(self, seq, side):
         """ Convert word indices to words.
@@ -656,6 +652,8 @@ class Comparable():
                 src2tgt[src][tgt] = sim
                 tgt2src[tgt][src] = sim
                 similarities.append(sim)
+        if self.sim_measure == 'cosine':
+            return src2tgt, tgt2src, similarities, similarities
         for src, _ in src_sents:
             src2tgt[src]['sum'] = self._sum_k_nearest(src2tgt, src)
 
@@ -700,7 +698,7 @@ class Comparable():
                 for ex in range(fets.size(1)):
                     cove = self.get_cove(sent_repr, ex)
                     sents.append((batch.src[0][:, ex], cove))
-        return sents
+                return sents
 
     def filter_candidates(self, src2tgt, tgt2src, second=False):
         src_tgt_max = set()
