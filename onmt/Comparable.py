@@ -400,6 +400,7 @@ class Comparable():
         self.representations = opt.representations
         #self.internal_split = opt.internal_split
         self.cur_num_combinations = 1
+        self.max_len = opt.max_len
 
 
     def _get_iterator(self, src_path):
@@ -697,6 +698,8 @@ class Comparable():
                     sent_repr = self.forward(fets, representation='embed')
                 for ex in range(fets.size(1)):
                     cove = self.get_cove(sent_repr, ex)
+                    if batch.src[0].size(0) > self.max_len:
+                        continue
                     sents.append((batch.src[0][:, ex], cove))
                 return sents
 
