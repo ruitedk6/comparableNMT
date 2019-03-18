@@ -529,6 +529,8 @@ def train_opts(parser):
                        Options: [dual|embed-only|hidden-only]""")
     group.add_argument('--internal_split', '-internal_split', type=int, default=None,
                       help="""Specify size of corpus internal splits to perform.""")
+    group.add_argument('--max_len', '-max_len', type=int, default=100,
+                      help="""Maximum length of sentences to when creating comparable corpus.""")
 
 def translate_opts(parser):
     """ Translation / inference options """
