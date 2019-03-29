@@ -403,6 +403,7 @@ class Comparable():
         self.max_len = opt.max_len
         self.valid_steps = opt.valid_steps
         self.no_valid = opt.no_valid
+        self.fast = opt.fast
 
 
     def _get_iterator(self, src_path):
@@ -512,9 +513,9 @@ class Comparable():
             #print(out)
         return None
 
-    def get_cove(self, memory, ex):
+    def get_cove(self, memory, ex, mean=False):
         seq_ex = memory[:, ex, :]
-        if self.cove_type == 'mean':
+        if mean:
             cove = torch.mean(seq_ex, dim=0)
         else:
             cove = torch.sum(seq_ex, dim=0)
@@ -642,14 +643,14 @@ class Comparable():
         sum_k_nearest = sum([ex[1] for ex in k_nearest])
         return sum_k_nearest / (2 * len(k_nearest))
 
-    def score_sents(self, src_sents, tgt_sents):
+    def score_sents(self, src_sents, tgt_sents, article=False):
         src2tgt = defaultdict(dict)
         tgt2src = defaultdict(dict)
         similarities = []
         scores= []
         for src, src_cove in src_sents:
             for tgt, tgt_cove in tgt_sents:
-                if src[0] == tgt[0]:
+                if src[0] == tgt[0] and article == False:
                     continue
                 sim = self.calculate_similarity(src_cove, tgt_cove)
                 src2tgt[src][tgt] = sim
@@ -665,13 +666,13 @@ class Comparable():
 
         for src, _ in src_sents:
             for tgt, _ in tgt_sents:
-                if src[0] == tgt[0]:
+                if src[0] == tgt[0] and article == False:
                     continue
                 src2tgt[src][tgt] /= (src2tgt[src]['sum'] + tgt2src[tgt]['sum'])
 
         for tgt, tgt_cove in tgt_sents:
             for src, src_cove in src_sents:
-                if src[0] == tgt[0]:
+                if src[0] == tgt[0] and article == False:
                     continue
                 #print(src2tgt[src][tgt])
                 tgt2src[tgt][src] /= (src2tgt[src]['sum'] + tgt2src[tgt]['sum'])
@@ -689,7 +690,7 @@ class Comparable():
         return src2tgt, tgt2src, similarities, scores
 
 
-    def get_article_coves(self, article, representation='memory'):
+    def get_article_coves(self, article, representation='memory', fast=False, mean=False):
         sents = []
         for batch in article:
                 fets, _ = Comparable.getFeatures(batch, 'src')
@@ -699,17 +700,21 @@ class Comparable():
                     fets[fets<500] = 1
                     sent_repr = self.forward(fets, representation='embed')
                 for ex in range(fets.size(1)):
-                    cove = self.get_cove(sent_repr, ex)
-                    if batch.src[0].size(0) > self.max_len:
+                    cove = self.get_cove(sent_repr, ex, mean=mean)
+                    seq = batch.src[0][:, ex]
+                    if batch.src[1][ex].item() > self.max_len:
                         continue
-                    sents.append((batch.src[0][:, ex], cove))
-                return sents
+                    sents.append((seq, cove))
+                if fast:
+                    return sents
+        return sents
 
-    def filter_candidates(self, src2tgt, tgt2src, second=False):
+    def filter_candidates(self, src2tgt, tgt2src, second=False, topn=False):
         src_tgt_max = set()
         tgt_src_max = set()
         src_tgt_second = set()
         tgt_src_second = set()
+        tops = set()
         for src in list(src2tgt.keys()):
             toplist = sorted(src2tgt[src].items(), key=lambda x: x[1], reverse=True)
             max_tgt = toplist[0]
@@ -717,32 +722,84 @@ class Comparable():
             if second:
                 second_tgt = toplist[1]
                 src_tgt_second.add((src, second_tgt[0], second_tgt[1]))
+            if topn:
+                for n in range(1, topn):
+                    try:
+                        tops.add((src, toplist[n][0], toplist[n][1]))
+                    except:
+                        continue
+
 
         for tgt in list(tgt2src.keys()):
             toplist = sorted(tgt2src[tgt].items(), key=lambda x: x[1], reverse=True)
             max_src = toplist[0]
             tgt_src_max.add((max_src[0], tgt, max_src[1]))
-            if second:
-                second_src = toplist[1]
-                tgt_src_second.add((second_src[0], tgt, second_src[1]))
-
+            #if second:
+            #    second_src = toplist[1]
+            #    tgt_src_second.add((second_src[0], tgt, second_src[1]))
+            if topn:
+                for n in range(1, topn):
+                    try:
+                        tops.add((toplist[n][0], tgt, toplist[n][1]))
+                    except:
+                        continue
         if second:
             src_tgt = (src_tgt_max | src_tgt_second) & tgt_src_max
             #tgt_src = (tgt_src_max | tgt_src_second) & src_tgt_max
             #candidates = list(src_tgt | tgt_src)
             return list(src_tgt)
 
+        if topn:
+            return list(src_tgt_max | tgt_src_max | tops)
+
         candidates = list(src_tgt_max & tgt_src_max)
         return candidates
 
     def get_comparison_pool(self, src_article, tgt_article):
-        src_embeds = self.get_article_coves(src_article, 'embed')
-        tgt_embeds = self.get_article_coves(tgt_article, 'embed')
+        src_embeds = self.get_article_coves(src_article, 'embed', fast=self.fast)
+        tgt_embeds = self.get_article_coves(tgt_article, 'embed', fast=self.fast)
         src2tgt_embed, tgt2src_embed, _, _ = self.score_sents(src_embeds, tgt_embeds)
         candidates_embed = self.filter_candidates(src2tgt_embed, tgt2src_embed)
         set_embed = set([hash((str(c[0]), str(c[1]))) for c in candidates_embed])
         candidate_pool = set_embed
         return candidate_pool
+
+    def get_article_representations(self, list_file):
+        article_representations = []
+        cur_list_file = open(list_file, encoding='utf8').read().split('\n')
+        for cur_file in cur_list_file:
+            if cur_file == '':
+                continue
+            article = self._get_iterator(cur_file)
+            sents = self.get_article_coves(article, mean=True)
+            article_stack = torch.stack([sent[1] for sent in sents])
+            article_repr = torch.mean(article_stack, dim=0)
+            article_representations.append((cur_file, article_repr))
+        return article_representations
+
+    def match_articles(self, list_path):
+        candidates = []
+        list_files = open(list_path, encoding='utf8').read().split('\n')
+        for line in list_files:
+            if line == '':
+                continue
+            list_pair = line.split('\t')
+            src_list = list_pair[0]
+            tgt_list = list_pair[1]
+            src_articles = self.get_article_representations(src_list)
+            tgt_articles = self.get_article_representations(tgt_list)
+            src2tgt, tgt2src, similarities, scores = self.score_sents(src_articles,
+                                                                      tgt_articles,
+                                                                      article=True)
+
+            candidates += self.filter_candidates(src2tgt, tgt2src, topn=2)
+        match_file = '{}_matched_articles-e{}.txt'.format(self.comp_log,
+                                                          self.trainer.cur_epoch)
+        with open(match_file, 'w+', encoding='utf8') as f:
+            for pair in candidates:
+                f.write('{}\t{}\n'.format(pair[0], pair[1]))
+        return match_file
+
 
 
     def extract_and_train(self, comparable_data_list):
@@ -780,11 +837,11 @@ class Comparable():
                 #try and except
                 try:
                     if self.representations == 'embed-only':
-                        src_sents = self.get_article_coves(src_article, 'embed')
-                        tgt_sents = self.get_article_coves(tgt_article, 'embed')
+                        src_sents = self.get_article_coves(src_article, 'embed', fast=self.fast)
+                        tgt_sents = self.get_article_coves(tgt_article, 'embed', fast=self.fast)
                     else:
-                        src_sents = self.get_article_coves(src_article)
-                        tgt_sents = self.get_article_coves(tgt_article)
+                        src_sents = self.get_article_coves(src_article, fast=self.fast)
+                        tgt_sents = self.get_article_coves(tgt_article, fast=self.fast)
                 except:
                     continue
 

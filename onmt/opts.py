@@ -533,6 +533,10 @@ def train_opts(parser):
                       help="""Maximum length of sentences to when creating comparable corpus.""")
     group.add_argument('--no_valid', '-no_valid', action="store_true",
                       help="""Do not perform validation.""")
+    group.add_argument('--fast', '-fast', action="store_true",
+                      help="""Only look at first batch per document.""")
+    group.add_argument('--match_articles', '-match_articles', default=None,
+                      help="""Path to the list of the articles to match.""")
 
 def translate_opts(parser):
     """ Translation / inference options """
