@@ -401,6 +401,8 @@ class Comparable():
         #self.internal_split = opt.internal_split
         self.cur_num_combinations = 1
         self.max_len = opt.max_len
+        self.valid_steps = opt.valid_steps
+        self.no_valid = opt.no_valid
 
 
     def _get_iterator(self, src_path):
@@ -815,10 +817,11 @@ class Comparable():
                     train_stats = self.trainer.train(training_batch)
                     self.trainstep += 1
                     trained_batchs += 1
-                    if trained_batchs % 500 == 0:
-                        valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
+                    if trained_batchs % self.valid_steps == 0:
+                        if self.no_valid == False:
+                            valid_iter = build_dataset_iter(lazily_load_dataset('valid', self.opt),
                                                         self.fields, self.opt)
-                        valid_stats = self.validate(valid_iter)
+                            valid_stats = self.validate(valid_iter)
                     if trained_batchs % 5000 == 0:
                         self.trainer.model_saver._save(self.trainstep)
                         if self.opt.threshold_dynamics == 'static':

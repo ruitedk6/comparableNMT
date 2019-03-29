@@ -180,8 +180,9 @@ def main(opt, device_id):
             train_stats = comp.extract_and_train(opt.comparable_data)
 
             # 5. Validate on validation set
-            valid_iter = build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
-            valid_stats = comp.validate(valid_iter)
+            if opt.no_valid == False:
+                valid_iter = build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
+                valid_stats = comp.validate(valid_iter)
 
             # 6. Drop a checkpoint if needed
             comp.trainer.model_saver._save(epoch)

@@ -531,6 +531,8 @@ def train_opts(parser):
                       help="""Specify size of corpus internal splits to perform.""")
     group.add_argument('--max_len', '-max_len', type=int, default=100,
                       help="""Maximum length of sentences to when creating comparable corpus.""")
+    group.add_argument('--no_valid', '-no_valid', action="store_true",
+                      help="""Do not perform validation.""")
 
 def translate_opts(parser):
     """ Translation / inference options """
