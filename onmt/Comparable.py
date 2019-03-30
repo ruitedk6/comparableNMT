@@ -874,6 +874,7 @@ class Comparable():
                         training_batch = self.similar_pairs.yield_batch()
                     except:
                         print('Error creating batch. Continuing...', flush=True)
+                        continue
                     train_stats = self.trainer.train(training_batch)
                     self.trainstep += 1
                     trained_batchs += 1
