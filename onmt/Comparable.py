@@ -870,7 +870,10 @@ class Comparable():
                 # Check if enough parallel sentences were collected
                 while self.similar_pairs.contains_batch():
                     # Get a batch of extracted parrallel sentences and train
-                    training_batch = self.similar_pairs.yield_batch()
+                    try:
+                        training_batch = self.similar_pairs.yield_batch()
+                    except:
+                        print('Error creating batch. Continuing...', flush=True)
                     train_stats = self.trainer.train(training_batch)
                     self.trainstep += 1
                     trained_batchs += 1
