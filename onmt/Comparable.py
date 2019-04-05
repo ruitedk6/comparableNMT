@@ -778,6 +778,8 @@ class Comparable():
         return article_representations
 
     def match_articles(self, list_path):
+        match_file = '{}_matched_articles-e{}.txt'.format(self.comp_log,
+                                                          self.trainer.cur_epoch)
         candidates = []
         list_files = open(list_path, encoding='utf8').read().split('\n')
         for line in list_files:
@@ -792,12 +794,10 @@ class Comparable():
                                                                       tgt_articles,
                                                                       article=True)
 
-            candidates += self.filter_candidates(src2tgt, tgt2src, topn=2)
-        match_file = '{}_matched_articles-e{}.txt'.format(self.comp_log,
-                                                          self.trainer.cur_epoch)
-        with open(match_file, 'w+', encoding='utf8') as f:
-            for pair in candidates:
-                f.write('{}\t{}\n'.format(pair[0], pair[1]))
+            candidates = self.filter_candidates(src2tgt, tgt2src, topn=2)
+            with open(match_file, 'a', encoding='utf8') as f:
+                for pair in candidates:
+                    f.write('{}\t{}\n'.format(pair[0], pair[1]))
         return match_file
 
 
@@ -820,6 +820,8 @@ class Comparable():
         # Go through comparable data
         counter = 0
         trained_batchs = 0
+        src_sents = []
+        tgt_sents = []
         with open(comparable_data_list, encoding='utf8') as c:
             comp_list = c.read().split('\n')
             num_articles = len(comp_list)
@@ -837,14 +839,13 @@ class Comparable():
                 #try and except
                 try:
                     if self.representations == 'embed-only':
-                        src_sents = self.get_article_coves(src_article, 'embed', fast=self.fast)
-                        tgt_sents = self.get_article_coves(tgt_article, 'embed', fast=self.fast)
+                        src_sents += self.get_article_coves(src_article, 'embed', fast=self.fast)
+                        tgt_sents += self.get_article_coves(tgt_article, 'embed', fast=self.fast)
                     else:
-                        src_sents = self.get_article_coves(src_article, fast=self.fast)
-                        tgt_sents = self.get_article_coves(tgt_article, fast=self.fast)
+                        src_sents += self.get_article_coves(src_article, fast=self.fast)
+                        tgt_sents += self.get_article_coves(tgt_article, fast=self.fast)
                 except:
                     continue
-
                 # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
                 if len(src_sents) < 15 or len(tgt_sents) < 15:
                     continue
@@ -853,6 +854,8 @@ class Comparable():
                 src2tgt, tgt2src, similarities, scores = self.score_sents(src_sents, tgt_sents)
                 epoch_similarities += similarities
                 epoch_scores += scores
+                src_sents = []
+                tgt_sents = []
                 # Filter candidates
                 try:
                     if self.representations == 'dual':
