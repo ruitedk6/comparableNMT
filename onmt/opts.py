@@ -537,6 +537,8 @@ def train_opts(parser):
                       help="""Only look at first batch per document.""")
     group.add_argument('--match_articles', '-match_articles', default=None,
                       help="""Path to the list of the articles to match.""")
+    group.add_argument('--write_dual', '-write_dual', action="store_true",
+                      help="""Write sentences accepted by only one representation type.""")
 
 def translate_opts(parser):
     """ Translation / inference options """

@@ -404,6 +404,7 @@ class Comparable():
         self.valid_steps = opt.valid_steps
         self.no_valid = opt.no_valid
         self.fast = opt.fast
+        self.write_dual = opt.write_dual
 
 
     def _get_iterator(self, src_path):
@@ -508,6 +509,12 @@ class Comparable():
                                             ' '.join(tgt_words), score, status)
         if status == 'accepted' or status == 'accepted-limit':
             self.accepted_file.write(out)
+        elif status == 'embed_only':
+            with open(self.embed_file, 'a', encoding='utf8') as f:
+                f.write(out)
+        elif status == 'hidden_only':
+            with open(self.hidden_file, 'a', encoding='utf8') as f:
+                f.write(out)
         #else:
             #self.rejected_file.write(out)
             #print(out)
@@ -558,9 +565,11 @@ class Comparable():
             candidate_pair = hash((str(candidate[0]), str(candidate[1])))
             if candidate_pool:
                 if candidate_pair not in candidate_pool:
-                    #self.write_sentence(candidate[0], candidate[1], 'rejected', candidate[2])
                     self.declined += 1
                     self.total += 1
+                    if self.write_dual:
+                        self.write_sentence(candidate[0], candidate[1],
+                                            'hidden_only', candidate[2])
                     continue
             swap = np.random.randint(2)
             if swap:
@@ -693,23 +702,23 @@ class Comparable():
     def get_article_coves(self, article, representation='memory', fast=False, mean=False):
         sents = []
         for batch in article:
-                fets, _ = Comparable.getFeatures(batch, 'src')
-                if representation == 'memory':
-                    sent_repr = self.forward(fets)
-                elif representation == 'embed':
-                    fets[fets<500] = 1
-                    sent_repr = self.forward(fets, representation='embed')
-                for ex in range(fets.size(1)):
-                    cove = self.get_cove(sent_repr, ex, mean=mean)
-                    seq = batch.src[0][:, ex]
-                    if batch.src[1][ex].item() > self.max_len:
-                        continue
-                    sents.append((seq, cove))
-                if fast:
-                    return sents
+            fets, _ = Comparable.getFeatures(batch, 'src')
+            if representation == 'memory':
+                sent_repr = self.forward(fets)
+            elif representation == 'embed':
+                fets[fets<500] = 1
+                sent_repr = self.forward(fets, representation='embed')
+            for ex in range(fets.size(1)):
+                cove = self.get_cove(sent_repr, ex, mean=mean)
+                seq = batch.src[0][:, ex]
+                if batch.src[1][ex].item() > self.max_len:
+                    continue
+                sents.append((seq, cove))
+            if fast:
+                return sents
         return sents
 
-    def filter_candidates(self, src2tgt, tgt2src, second=False, topn=False):
+    def filter_candidates(self, src2tgt, tgt2src, second=False):
         src_tgt_max = set()
         tgt_src_max = set()
         src_tgt_second = set()
@@ -722,12 +731,12 @@ class Comparable():
             if second:
                 second_tgt = toplist[1]
                 src_tgt_second.add((src, second_tgt[0], second_tgt[1]))
-            if topn:
-                for n in range(1, topn):
-                    try:
-                        tops.add((src, toplist[n][0], toplist[n][1]))
-                    except:
-                        continue
+            #if topn:
+            #    for n in range(1, topn):
+            #        try:
+            #            tops.add((src, toplist[n][0], toplist[n][1]))
+            #        except:
+            #            continue
 
 
         for tgt in list(tgt2src.keys()):
@@ -737,32 +746,32 @@ class Comparable():
             #if second:
             #    second_src = toplist[1]
             #    tgt_src_second.add((second_src[0], tgt, second_src[1]))
-            if topn:
-                for n in range(1, topn):
-                    try:
-                        tops.add((toplist[n][0], tgt, toplist[n][1]))
-                    except:
-                        continue
+            #if topn:
+            #    for n in range(1, topn):
+            #        try:
+            #            tops.add((toplist[n][0], tgt, toplist[n][1]))
+            #        except:
+            #            continue
         if second:
             src_tgt = (src_tgt_max | src_tgt_second) & tgt_src_max
             #tgt_src = (tgt_src_max | tgt_src_second) & src_tgt_max
             #candidates = list(src_tgt | tgt_src)
             return list(src_tgt)
 
-        if topn:
-            return list(src_tgt_max | tgt_src_max | tops)
+        #if topn:
+        #    return list(src_tgt_max | tgt_src_max | tops)
 
         candidates = list(src_tgt_max & tgt_src_max)
         return candidates
 
-    def get_comparison_pool(self, src_article, tgt_article):
-        src_embeds = self.get_article_coves(src_article, 'embed', fast=self.fast)
-        tgt_embeds = self.get_article_coves(tgt_article, 'embed', fast=self.fast)
+    def get_comparison_pool(self, src_embeds, tgt_embeds):
+        #src_embeds = self.get_article_coves(src_article, 'embed', fast=self.fast)
+        #tgt_embeds = self.get_article_coves(tgt_article, 'embed', fast=self.fast)
         src2tgt_embed, tgt2src_embed, _, _ = self.score_sents(src_embeds, tgt_embeds)
         candidates_embed = self.filter_candidates(src2tgt_embed, tgt2src_embed)
         set_embed = set([hash((str(c[0]), str(c[1]))) for c in candidates_embed])
         candidate_pool = set_embed
-        return candidate_pool
+        return candidate_pool, candidates_embed
 
     def get_article_representations(self, list_file):
         article_representations = []
@@ -794,13 +803,23 @@ class Comparable():
                                                                       tgt_articles,
                                                                       article=True)
 
-            candidates = self.filter_candidates(src2tgt, tgt2src, topn=2)
+            candidates = self.filter_candidates(src2tgt, tgt2src)
             with open(match_file, 'a', encoding='utf8') as f:
                 for pair in candidates:
                     f.write('{}\t{}\n'.format(pair[0], pair[1]))
         return match_file
 
 
+    def write_embed_only(self, candidates, cand_embed):
+        candidate_pool = set([hash((str(c[0]), str(c[1]))) for c in candidates])
+
+        for candidate in cand_embed:
+            candidate_pair = hash((str(candidate[0]), str(candidate[1])))
+            if candidate_pair not in candidate_pool:
+                src = candidate[0]
+                tgt = candidate[1]
+                score = candidate[2]
+                self.write_sentence(src, tgt, 'embed_only', score)
 
     def extract_and_train(self, comparable_data_list):
         """ Manages the alternating extraction of parallel sentences and training.
@@ -815,6 +834,11 @@ class Comparable():
                 open('{}_rejected-e{}.txt'.format(self.comp_log, self.trainer.cur_epoch) ,'w+', encoding='utf8')
 
         self.status_file = '{}_status-e{}.txt'.format(self.comp_log, self.trainer.cur_epoch)
+        if self.write_dual:
+            self.embed_file = '{}_accepted_embed-e{}.txt'.format(self.comp_log,
+                                                                 self.trainer.cur_epoch)
+            self.hidden_file = '{}_accepted_hidden-e{}.txt'.format(self.comp_log,
+                                                                 self.trainer.cur_epoch)
         epoch_similarities = []
         epoch_scores = []
         # Go through comparable data
@@ -822,6 +846,8 @@ class Comparable():
         trained_batchs = 0
         src_sents = []
         tgt_sents = []
+        src_embeds = []
+        tgt_embeds = []
         with open(comparable_data_list, encoding='utf8') as c:
             comp_list = c.read().split('\n')
             num_articles = len(comp_list)
@@ -844,7 +870,15 @@ class Comparable():
                     else:
                         src_sents += self.get_article_coves(src_article, fast=self.fast)
                         tgt_sents += self.get_article_coves(tgt_article, fast=self.fast)
+                        src_embeds += self.get_article_coves(src_article,
+                                                            'embed', fast=self.fast)
+                        tgt_embeds += self.get_article_coves(tgt_article,
+                                                            'embed', fast=self.fast)
                 except:
+                    src_sents = []
+                    tgt_sents = []
+                    src_embeds = []
+                    tgt_embeds = []
                     continue
                 # Kick out articles shorter than k sents (otherwise scoring becomes unstable)
                 if len(src_sents) < 15 or len(tgt_sents) < 15:
@@ -860,13 +894,19 @@ class Comparable():
                 try:
                     if self.representations == 'dual':
                         candidates = self.filter_candidates(src2tgt, tgt2src, second=self.second)
-                        comparison_pool = self.get_comparison_pool(src_article,
-                                                                   tgt_article)
+                        comparison_pool, cand_embed = self.get_comparison_pool(src_embeds,
+                                                                               tgt_embeds)
+                        src_embeds = []
+                        tgt_embeds = []
+                        if self.write_dual:
+                            self.write_embed_only(candidates, cand_embed)
                     else:
                         candidates = self.filter_candidates(src2tgt, tgt2src)
                         comparison_pool = None
                 except:
                     print('Error occured in: {}\n'.format(article_pair), flush=True)
+                    src_embeds = []
+                    tgt_embeds = []
                     continue
                 # Extract parallel samples
                 self.extract_parallel_sents(candidates, comparison_pool)
