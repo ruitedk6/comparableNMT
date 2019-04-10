@@ -539,6 +539,8 @@ def train_opts(parser):
                       help="""Path to the list of the articles to match.""")
     group.add_argument('--write_dual', '-write_dual', action="store_true",
                       help="""Write sentences accepted by only one representation type.""")
+    group.add_argument('--no_swaps', '-no_swaps', action="store_true",
+                      help="""Do not perform random swaps of src-tgt.""")
 
 def translate_opts(parser):
     """ Translation / inference options """

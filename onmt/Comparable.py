@@ -405,6 +405,7 @@ class Comparable():
         self.no_valid = opt.no_valid
         self.fast = opt.fast
         self.write_dual = opt.write_dual
+        self.no_swaps = opt.no_swaps
 
 
     def _get_iterator(self, src_path):
@@ -571,7 +572,10 @@ class Comparable():
                         self.write_sentence(candidate[0], candidate[1],
                                             'hidden_only', candidate[2])
                     continue
-            swap = np.random.randint(2)
+            if self.no_swaps:
+                swaps = False
+            else:
+                swap = np.random.randint(2)
             if swap:
                 src = candidate[1]
                 tgt = candidate[0]
