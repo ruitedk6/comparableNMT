@@ -494,17 +494,6 @@ def train_opts(parser):
                        """)
     group.add_argument('--threshold', '-threshold', type=float, default=float('-inf'),
                        help="Decision threshold for keeping a similar pair.")
-    group.add_argument('--infer_threshold', '-infer_threshold', default=None,
-                       help="""Infers threshold from training data.
-                       Options: [mean-s|mean|mean+s|percentile|em]
-                       (Overwrites threshold argument!)""")
-    group.add_argument('--infer_data', '-infer_data', default="base",
-                      help="""Choose dataset on which threshold estimation is performed.
-                       Options: [base|comp]""")
-    group.add_argument('--em_prob_threshold', '-em_prob_threshold', type=float, default=0.7,
-                      help="""Set the probability threshold for EM threshold inferrence.""")
-    group.add_argument('--percentile', '-percentile', type=int, default=50,
-                      help="""Set the percentile for percentile-based threshold inferrence.""")
     group.add_argument('--threshold_dynamics', '-threshold_dynamics', default='static',
                        help="""Set threshold dynamics. Options: [static|grow|decay]""")
     group.add_argument('--comp_example_limit', '-comp_example_limit', type=int, default=float('inf'),
@@ -527,16 +516,12 @@ def train_opts(parser):
     group.add_argument('--representations', '-representations', default='dual',
                       help="""Sentece representations used.
                        Options: [dual|embed-only|hidden-only]""")
-    group.add_argument('--internal_split', '-internal_split', type=int, default=None,
-                      help="""Specify size of corpus internal splits to perform.""")
     group.add_argument('--max_len', '-max_len', type=int, default=100,
                       help="""Maximum length of sentences to when creating comparable corpus.""")
     group.add_argument('--no_valid', '-no_valid', action="store_true",
                       help="""Do not perform validation.""")
     group.add_argument('--fast', '-fast', action="store_true",
                       help="""Only look at first batch per document.""")
-    group.add_argument('--match_articles', '-match_articles', default=None,
-                      help="""Path to the list of the articles to match.""")
     group.add_argument('--write_dual', '-write_dual', action="store_true",
                       help="""Write sentences accepted by only one representation type.""")
     group.add_argument('--no_swaps', '-no_swaps', action="store_true",

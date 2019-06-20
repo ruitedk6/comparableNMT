@@ -177,11 +177,11 @@ def main(opt, device_id):
 
 
             # 4. Extract parallel data and train 
-            if opt.match_articles:
-                comparable_data = comp.match_articles(opt.match_articles)
-                train_stats = comp.extract_and_train(comparable_data)
-            else:
-                train_stats = comp.extract_and_train(opt.comparable_data)
+            #if opt.match_articles:
+            #    comparable_data = comp.match_articles(opt.match_articles)
+            #    train_stats = comp.extract_and_train(comparable_data)
+            #else:
+            train_stats = comp.extract_and_train(opt.comparable_data)
 
             # 5. Validate on validation set
             if opt.no_valid == False:
