@@ -326,14 +326,6 @@ class Translator(object):
         enc_states, memory_bank, src_lengths = self.model.encoder(
             src, src_lengths)
         _, tgt_memory_bank, _ = self.model.encoder(tgt, None)
-        print(memory_bank[:,1,:])
-        print(tgt_memory_bank[:,1,:])
-        for ex in range(src.size(1)):
-            src_ex = memory_bank[:,ex,:]
-            tgt_ex = tgt_memory_bank[:,ex,:]
-            src_cove = torch.sum(src_ex, dim=0)
-            tgt_cove = torch.sum(tgt_ex, dim=0)
-            print(nn.functional.cosine_similarity(src_cove, tgt_cove, dim=0).tolist())
 
         if src_lengths is None:
             assert not isinstance(memory_bank, tuple), \
