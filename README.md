@@ -1,159 +1,109 @@
-# OpenNMT-py: Open-Source Neural Machine Translation
+# Self-Supervised Neural Machine Translation
 
-[![Build Status](https://travis-ci.org/OpenNMT/OpenNMT-py.svg?branch=master)](https://travis-ci.org/OpenNMT/OpenNMT-py)
-[![Run on FH](https://img.shields.io/badge/Run%20on-FloydHub-blue.svg)](https://floydhub.com/run?template=https://github.com/OpenNMT/OpenNMT-py)
+This is the code used for the paper *Self-Supervised Neural Machine Translation*, which describes a joint parallel data extraction and NMT training approach. It is based on a December 2018 copy of the [OpenNMT-py](https://github.com/OpenNMT/OpenNMT-py) repository. Be aware that it is therefore not up-to-date with current changes in the original OpenNMT-py code.
 
-This is a [Pytorch](https://github.com/pytorch/pytorch)
-port of [OpenNMT](https://github.com/OpenNMT/OpenNMT),
-an open-source (MIT) neural machine translation system. It is designed to be research friendly to try out new ideas in translation, summary, image-to-text, morphology, and many other domains. Some companies have proven the code to be production ready.
+## Installation
 
-We love contributions. Please consult the Issues page for any [Contributions Welcome](https://github.com/OpenNMT/OpenNMT-py/issues?q=is%3Aissue+is%3Aopen+label%3A%22contributions+welcome%22) tagged post. 
+1. Clone this repository and make sure you have [Anaconda Python](https://www.anaconda.com/distribution/) installed.
 
-<center style="padding: 40px"><img width="70%" src="http://opennmt.github.io/simple-attn.png" /></center>
-
-Before raising an issue, make sure you read the requirements and the documentation examples.
-
-Unless there is a bug, please use the [Forum](http://forum.opennmt.net) or [Gitter](https://gitter.im/OpenNMT/OpenNMT-py) to ask questions.
-
-
-Table of Contents
-=================
-  * [Full Documentation](http://opennmt.net/OpenNMT-py/)
-  * [Requirements](#requirements)
-  * [Features](#features)
-  * [Quickstart](#quickstart)
-  * [Run on FloydHub](#run-on-floydhub)
-  * [Acknowledgements](#acknowledgements)
-  * [Citation](#citation)
-
-## Requirements
-
-All dependencies can be installed via:
-
-```bash
-pip install -r requirements.txt
+2. Create a virtual environment with Python 3.6 and activate
+```
+conda create -n comparableNMT python=3.6
+conda activate comparableNMT
 ```
 
-Note that we currently only support PyTorch 1.0.0
+3. Install the following packages...
+   * [Pytorch](https://pytorch.org/) with CUDA support (if available)
+   * Torchtext version 0.3.1
+   * Configargparse
+   * Six
 
-## Features
+## Instructions
 
-- [data preprocessing](http://opennmt.net/OpenNMT-py/options/preprocess.html)
-- [Inference (translation) with batching and beam search](http://opennmt.net/OpenNMT-py/options/translate.html)
-- [Multiple source and target RNN (lstm/gru) types and attention (dotprod/mlp) types](http://opennmt.net/OpenNMT-py/options/train.html#model-encoder-decoder)
-- [TensorBoard](http://opennmt.net/OpenNMT-py/options/train.html#logging)
-- [Source word features](http://opennmt.net/OpenNMT-py/options/train.html#model-embeddings)
-- [Pretrained Embeddings](http://opennmt.net/OpenNMT-py/FAQ.html#how-do-i-use-pretrained-embeddings-e-g-glove)
-- [Copy and Coverage Attention](http://opennmt.net/OpenNMT-py/options/train.html#model-attention)
-- [Image-to-text processing](http://opennmt.net/OpenNMT-py/im2text.html)
-- [Speech-to-text processing](http://opennmt.net/OpenNMT-py/speech2text.html)
-- ["Attention is all you need"](http://opennmt.net/OpenNMT-py/FAQ.html#how-do-i-use-the-transformer-model)
-- [Multi-GPU](http://opennmt.net/OpenNMT-py/FAQ.html##do-you-support-multi-gpu)
-- Inference time loss functions.
+In order to train the system without any paralell data, you will need plenty of comparable data as well as pre-trained word embeddings. It is vital that the comparable data used for extraction uses the same [Byte-Pair Encoding](https://github.com/rsennrich/subword-nmt) (BPE) as the data that the word embeddings were trained on.
 
-Beta Features (committed):
-- Structured attention
-- [Conv2Conv convolution model]
-- SRU "RNNs faster than CNN" paper
+### Training unsupervised embeddings
+
+1. Accumulate large amounts of monolingual data in your L1 and L2 languages.
+
+2. Preprocess (e.g. using [Moses scripts](https://github.com/moses-smt/mosesdecoder/tree/master/scripts)) and apply BPE encoding.
+
+3. Train [Word2Vec](https://github.com/tmikolov/word2vec) monolingual embeddings for L1 as well as for L2 data.
+
+4. Map monolingual embeddings into common space using [Vecmap](https://github.com/tmikolov/word2vec) and a seed dictionary of numerals.
+
+5. Once the embeddings are mapped into a common space, merge the source and target embeddings into a single file (you'll need to write a small script for doing that).
+
+### Prepare comparable corpus
+
+1. Collect a comparable corpus, ensuring that an article in L1 talks about the same topic as the corresponding article in L2.
+
+2. Preprocess data, such that the final BPE encoding is the same as the one used for the monolingual data that the embeddings were trained on.
+
+3. Now, you should have a directory containing all your pre-processed comparable documents. For the system to know which ones are related to each other, create a `list-file`. In each line, it contains the absolute path to a document in L1 which should be mapped to a document in L2. Use a tab between the L1 and L2 document. As such:
+```
+/path/to/dogs.L1\t/path/to/dogs.L2\n
+/path/to/cats.L1\t/path/to/cats.L2\n
+...
+```
+
+4. Also, create a concatenated version of all the comparable documents. We will call these two files `corpus.L1` and `corpus.L2` for now. These are only needed to create the OpenNMT-py format vocabulary files.
+
+### Create OpenNMT corpus files
+
+1. Run preprocess.py on the `corpus.L1/L2` files. Do not forget to set the vocabulary size high enough to cover all words in the vocabulary. Also, it is *vital* to the system to have a shared vocabulary, so do not forget to set the -share_vocab tag. A sample run command can be found under `comparableNMT/run/examples/run_preproc.sh`
+
+2. Convert embeddings into OpenNMT format using embeddings_to_torch.py in the main directory. A sample run can be found under `comparableNMT/run/examples/run_embeds.sh`
+
+### Train
+
+Use train.py to train the system. Note that not all options available for training in OpenNMT-py are compatible with this code. For example, training on more than one GPU is currently not possible and batch sizes need to be given in number of sentences and not tokens. The examples in `comparableNMT/run/examples/run_train_XXXX.sh` show how to train the LSTM or Transformer models described in the paper. For best performance, look at `comparableNMT/run/examples/run_train_tf_margP.sh`
+
+#### Comparable training options
+
+```
+--comparable: use joint parallel data extraction and training (mandatory)
+--comparable_data: path to list-file (mandatory)
+--comp_log path to where extraction logs will be written (mandatory)
+--comp_epochs: number of epochs to pass over the comparable data (mandatory)
+--no_base: do not use any parallel data to pre-train your model (recommended)
+--fast: reduces the search space to the first batch in each document (substantially faster)
+--threshold: supply a similarity score that needs to be passed by candidates (not necessary if you are using dual representations)
+--second: use medium permissibility (margR)
+--sim_measure: similarity measure used (default: margin-based)
+--k: number of k-nearest neighbors to use when scoring (default: 4)
+--cove_type: the type of sentence representation creation to use (default: sum)
+--representations: dual uses both representation types, while hidden-only and embed-only use C_h and C_e respectively. In case of not using dual, it is recommended to set a threshold. (default: dual)
+--max_len: maximum length of sequences to train on
+--write_dual: this will also write logs for those sentence pairs accepted by one of the two representations only (can be used with dual representations)
+--no_swaps: do not perform random swaps in the src-tgt direction during training (not recommended)
+--comp_example_limit: supply a maximum number of unique pairs to extract (not recommended)
+```
+
+Run `train.py -h` for more information.
 
 ## Quickstart
 
-[Full Documentation](http://opennmt.net/OpenNMT-py/)
+For a quick start, you can download and use the embeddings and comparable data used for the paper here. We also provide the original BPE used for pre-processing. (ADD LINK)
 
+## Questions?
 
-### Step 1: Preprocess the data
+This code was used for research and is not stable. We can therefore not guarantee that any deviations from the example runs will work. In case you have problems running the example scripts, please open an issue.
 
-```bash
-python preprocess.py -train_src data/src-train.txt -train_tgt data/tgt-train.txt -valid_src data/src-val.txt -valid_tgt data/tgt-val.txt -save_data data/demo
+In case you use this code or the pre-processed data or embeddings provided, please remember to cite the original paper:
+
 ```
-
-We will be working with some example data in `data/` folder.
-
-The data consists of parallel source (`src`) and target (`tgt`) data containing one sentence per line with tokens separated by a space:
-
-* `src-train.txt`
-* `tgt-train.txt`
-* `src-val.txt`
-* `tgt-val.txt`
-
-Validation files are required and used to evaluate the convergence of the training. It usually contains no more than 5000 sentences.
-
-
-After running the preprocessing, the following files are generated:
-
-* `demo.train.pt`: serialized PyTorch file containing training data
-* `demo.valid.pt`: serialized PyTorch file containing validation data
-* `demo.vocab.pt`: serialized PyTorch file containing vocabulary data
-
-
-Internally the system never touches the words themselves, but uses these indices.
-
-### Step 2: Train the model
-
-```bash
-python train.py -data data/demo -save_model demo-model
+@inproceedings{ruiter2019self-supervised,
+  title={Self-Supervised Neural Machine Translation},
+  author={Ruiter, Dana and Espa{\~{n}}a-Bonet, Cristina and van Genabith, Josef},
+  booktitle = {Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, Volume 2: Short Papers},
+  month     = {August},
+  year      = {2019},
+  address   = {Florence, Italy},
+  publisher = {Association for Computational Linguistics}
+}
 ```
-
-The main train command is quite simple. Minimally it takes a data file
-and a save file.  This will run the default model, which consists of a
-2-layer LSTM with 500 hidden units on both the encoder/decoder.
-If you want to train on GPU, you need to set, as an example:
-CUDA_VISIBLE_DEVICES=1,3
-`-world_size 2 -gpu_ranks 0 1` to use (say) GPU 1 and 3 on this node only.
-To know more about distributed training on single or multi nodes, read the FAQ section.
-
-### Step 3: Translate
-
-```bash
-python translate.py -model demo-model_acc_XX.XX_ppl_XXX.XX_eX.pt -src data/src-test.txt -output pred.txt -replace_unk -verbose
-```
-
-Now you have a model which you can use to predict on new data. We do this by running beam search. This will output predictions into `pred.txt`.
-
-!!! note "Note"
-    The predictions are going to be quite terrible, as the demo dataset is small. Try running on some larger datasets! For example you can download millions of parallel sentences for [translation](http://www.statmt.org/wmt16/translation-task.html) or [summarization](https://github.com/harvardnlp/sent-summary).
-
-## Alternative: Run on FloydHub
-
-[![Run on FloydHub](https://static.floydhub.com/button/button.svg)](https://floydhub.com/run?template=https://github.com/OpenNMT/OpenNMT-py)
-
-Click this button to open a Workspace on [FloydHub](https://www.floydhub.com/?utm_medium=readme&utm_source=opennmt-py&utm_campaign=jul_2018) for training/testing your code.
-
-
-## Pretrained embeddings (e.g. GloVe)
-
-Go to tutorial: [How to use GloVe pre-trained embeddings in OpenNMT-py](http://forum.opennmt.net/t/how-to-use-glove-pre-trained-embeddings-in-opennmt-py/1011)
-
-## Pretrained Models
-
-The following pretrained models can be downloaded and used with translate.py.
-
-http://opennmt.net/Models-py/
-
-## Acknowledgements
-
-OpenNMT-py is run as a collaborative open-source project.
-The original code was written by [Adam Lerer](http://github.com/adamlerer) (NYC) to reproduce OpenNMT-Lua using Pytorch.
-
-Major contributors are:
-[Sasha Rush](https://github.com/srush) (Cambridge, MA)
-[Vincent Nguyen](https://github.com/vince62s) (Ubiqus)
-[Ben Peters](http://github.com/bpopeters) (Lisbon)
-[Sebastian Gehrmann](https://github.com/sebastianGehrmann) (Harvard NLP)
-[Yuntian Deng](https://github.com/da03) (Harvard NLP)
-[Guillaume Klein](https://github.com/guillaumekln) (Systran)
-[Paul Tardy](https://github.com/pltrdy) (Ubiqus / Lium)
-[François Hernandez](https://github.com/francoishernandez) (Ubiqus)
-[Jianyu Zhan](http://github.com/jianyuzhan) (Shanghai)
-and more !
-
-OpentNMT-py belongs to the OpenNMT project along with OpenNMT-Lua and OpenNMT-tf.
-
-## Citation
-
-[OpenNMT: Neural Machine Translation Toolkit](https://arxiv.org/pdf/1805.11462)
-
-[OpenNMT technical report](https://doi.org/10.18653/v1/P17-4012)
+The original [OpenNMT-py](https://github.com/OpenNMT/OpenNMT-py) code this repository is based on can be cited via:
 
 ```
 @inproceedings{opennmt,
@@ -169,3 +119,8 @@ OpentNMT-py belongs to the OpenNMT project along with OpenNMT-Lua and OpenNMT-tf
   doi       = {10.18653/v1/P17-4012}
 }
 ```
+
+
+
+
+
