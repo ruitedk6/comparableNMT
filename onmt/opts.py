@@ -541,6 +541,8 @@ def train_opts(parser):
                       help="""Write sentences accepted by only one representation type.""")
     group.add_argument('--no_swaps', '-no_swaps', action="store_true",
                       help="""Do not perform random swaps of src-tgt.""")
+    group.add_argument('--k', '-k', type=int,
+                      help="""Number of k-knearest neighbors to use when scoring.""")
 
 def translate_opts(parser):
     """ Translation / inference options """

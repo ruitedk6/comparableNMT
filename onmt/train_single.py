@@ -154,7 +154,6 @@ def main(opt, device_id):
         logger.info('Starting training on GPU: %s' % opt.gpu_ranks)
     else:
         logger.info('Starting training on CPU, could be very slow')
-
     if opt.no_base == False:
         trainer.train(train_iter_fct, valid_iter_fct, opt.train_steps,
                   opt.valid_steps)
