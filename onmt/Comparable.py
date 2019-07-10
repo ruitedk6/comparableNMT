@@ -475,10 +475,7 @@ class Comparable():
         with torch.no_grad():
             if representation == 'embed':
                 # word embeddings
-                if self.opt.encoder_type != 'transformer':
-                    embeddings = self.encoder.embeddings(side)
-                else:
-                    embeddings, memory_bank, src_lengths = self.encoder(side, None)
+                embeddings = self.encoder.embeddings(side)
                 return embeddings
             else: 
                 # hidden states/encoder output
