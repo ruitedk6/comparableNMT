@@ -82,9 +82,9 @@ Use train.py to train the system. Note that not all options available for traini
 
 Run `train.py -h` for more information.
 
-## Quickstart
+## Replicating results
 
-For a quick start, you can download and use the embeddings and comparable data used for the paper here. We also provide the original BPE used for pre-processing. (ADD LINK)
+We can provide the pre-trained embeddings, comparable data and original BPE used for pre-processing to researchers interested in replicating our results. Please send an e-mail to the first author with your request.
 
 ## Questions?
 
